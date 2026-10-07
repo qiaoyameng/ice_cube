@@ -66,6 +66,12 @@ occurrences = schedule.all_occurrences # [now, now + 2.days, now + 3.days]
 schedule.occurs_at?(now + 1.day)  # false
 schedule.occurs_at?(now + 2.days) # true
 
+# or explain why a single time is or is not an occurrence
+explanation = schedule.explain_occurrence(now + 2.days)
+explanation.included?  # true, false, or nil when the scan budget ran out
+explanation.providers # the rules/rtimes (by stable index) providing the time
+explanation.excluders # the exception rules/extimes excluding the time
+
 # or check just a single day
 schedule.occurs_on?(Date.today) # true
 

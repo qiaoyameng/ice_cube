@@ -293,6 +293,21 @@ module IceCube
       occurs_between?(time, time)
     end
 
+    # Explain why a specific time is or is not an occurrence of the schedule.
+    # Returns an OccurrenceExplanation listing the recurrence rules and
+    # rtimes that provide the time, the exception rules and extimes that
+    # exclude it, and whether it ultimately belongs to the schedule.
+    #
+    # COUNT-bounded rules are resolved by enumerating their occurrences from
+    # the start of the schedule on private copies of the rules, so querying
+    # never advances a schedule that is being iterated. The +budget+ limits
+    # how many enumeration steps those scans may take in total (nil means
+    # unlimited); if it runs out, the explanation is marked incomplete
+    # instead of claiming the time is definitely absent.
+    def explain_occurrence(time, budget: OccurrenceExplanation::DEFAULT_BUDGET)
+      OccurrenceExplanation.new(self, time, budget: budget)
+    end
+
     # Get the first n occurrences, or the first occurrence if n is skipped
     def first(n = nil)
       occurrences = enumerate_occurrences(start_time).take(n || 1)
