@@ -308,6 +308,62 @@ describe IceCube::Schedule do
       schedule.add_recurrence_rule IceCube::Rule.daily.until(Time.now + 3 * IceCube::ONE_DAY)
       expect(schedule.all_occurrences).to match_array(schedule.all_occurrences_enumerator.to_a)
     end
+
+    it "keeps independent COUNT progress across interleaved enumerators" do
+      schedule = IceCube::Schedule.new(Time.utc(2026, 1, 5, 9, 30)) do |s|
+        s.add_recurrence_rule IceCube::Rule.weekly.day(:monday, :wednesday).count(4)
+        s.add_exception_rule IceCube::Rule.weekly.day(:wednesday)
+      end
+      expected = schedule.all_occurrences
+
+      first = schedule.all_occurrences_enumerator
+      second = schedule.all_occurrences_enumerator
+
+      taken = [first.next]
+      expect(second.to_a).to eq(expected)
+
+      begin
+        loop { taken << first.next }
+      rescue StopIteration
+      end
+      expect(taken).to eq(expected)
+    end
+
+    it "is not truncated by queries made during enumeration" do
+      schedule = IceCube::Schedule.new(Time.utc(2026, 1, 5, 9, 30)) do |s|
+        s.add_recurrence_rule IceCube::Rule.daily.count(5)
+      end
+      expected = schedule.all_occurrences
+
+      enumerator = schedule.all_occurrences_enumerator
+      taken = [enumerator.next]
+      schedule.occurrences(Time.utc(2026, 2, 1))
+      schedule.occurring_at?(expected[2])
+
+      begin
+        loop { taken << enumerator.next }
+      rescue StopIteration
+      end
+      expect(taken).to eq(expected)
+    end
+
+    it "lets other enumerators continue after one is abandoned" do
+      schedule = IceCube::Schedule.new(Time.utc(2026, 1, 5, 9, 30)) do |s|
+        s.add_recurrence_rule IceCube::Rule.daily.count(3)
+      end
+      expected = schedule.all_occurrences
+
+      abandoned = schedule.all_occurrences_enumerator
+      survivor = schedule.all_occurrences_enumerator
+
+      abandoned.next
+      begin
+        raise "boom"
+      rescue
+      end
+
+      expect(survivor.to_a).to eq(expected)
+    end
   end
 
   describe :remaining_occurrences_enumerator do

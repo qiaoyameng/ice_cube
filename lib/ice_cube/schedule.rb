@@ -408,12 +408,6 @@ module IceCube
 
     private
 
-    # Reset all rules for another run
-    def reset
-      @all_recurrence_rules.each(&:reset)
-      @all_exception_rules.each(&:reset)
-    end
-
     # Find all of the occurrences for the schedule between opening_time
     # and closing_time
     # Iteration is unrolled in pairs to skip duplicate times in end of DST
@@ -424,12 +418,12 @@ module IceCube
       opening_time = start_time if opening_time < start_time
       spans = options[:spans] == true && duration != 0
       Enumerator.new do |yielder|
-        reset
+        recurrence_rules, exception_rules = enumeration_rule_copies
         t1 = full_required? ? start_time : opening_time
         t1 -= duration if spans
         t1 = start_time if t1 < start_time
         loop do
-          break unless (t0 = next_time(t1, closing_time))
+          break unless (t0 = next_time(t1, closing_time, recurrence_rules, exception_rules))
           break if closing_time && t0 > closing_time
           if spans ? (t0.end_time > opening_time) : (t0 >= opening_time)
             yielder << (block_given? ? yield(t0) : t0)
@@ -439,14 +433,35 @@ module IceCube
       end
     end
 
+    # Deep-copy the rules so that each enumerator tracks its own progress
+    # (COUNT uses, realignment, current position) independently. Interleaved
+    # enumerators and nested queries can no longer reset, consume, or
+    # realign one another's rule state.
+    def enumeration_rule_copies
+      recurrence = recurrence_rules_with_implicit_start_occurrence
+      [recurrence, @all_exception_rules].map do |rules|
+        rules.map { |rule| fresh_rule_copy(rule) }
+      end
+    end
+
+    # SingleOccurrenceRule holds no enumeration state and can be shared;
+    # stateful rules are deep-copied and reset to a pristine starting point.
+    def fresh_rule_copy(rule)
+      return rule if rule.is_a?(SingleOccurrenceRule)
+
+      copy = Marshal.load(Marshal.dump(rule))
+      copy.reset
+      copy
+    end
+
     # Get the next time after (or including) a specific time
-    def next_time(time, closing_time)
+    def next_time(time, closing_time, recurrence_rules, exception_rules)
       loop do
         # Probe all rules without consuming counts so we can pick the earliest
         # candidate, then charge counts only to rules that emitted that time.
         min_time = nil
         candidates = []
-        recurrence_rules_with_implicit_start_occurrence.each do |rule|
+        recurrence_rules.each do |rule|
           candidate = rule.next_time(time, start_time, min_time || closing_time, increment: false)
           next unless candidate
           candidates << [rule, candidate]
@@ -458,7 +473,7 @@ module IceCube
         candidates.each do |rule, candidate|
           rule.increment_uses if candidate == min_time && rule.respond_to?(:increment_uses)
         end
-        next (time = min_time + 1) if exception_time?(min_time)
+        next (time = min_time + 1) if exception_time?(min_time, exception_rules)
         break Occurrence.new(min_time, min_time + duration)
       end
     end
@@ -472,8 +487,8 @@ module IceCube
 
     # Return a boolean indicating whether or not a specific time
     # is excluded from the schedule
-    def exception_time?(time)
-      @all_exception_rules.any? do |rule|
+    def exception_time?(time, exception_rules = @all_exception_rules)
+      exception_rules.any? do |rule|
         rule.on?(time, start_time)
       end
     end
