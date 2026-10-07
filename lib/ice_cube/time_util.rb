@@ -133,6 +133,14 @@ module IceCube
       time.localtime(orig_offset_str)
     end
 
+    def self.rezone_instant(time, target)
+      RezoneTarget.resolve(target).instant(time)
+    end
+
+    def self.rezone_wall_time(time, target, ambiguous_time = :reject)
+      RezoneTarget.resolve(target).wall_time(time, ambiguous_time)
+    end
+
     # Get the beginning of a date
     def self.beginning_of_date(date, reference = Time.now)
       build_in_zone([date.year, date.month, date.day, 0, 0, 0], reference)
@@ -341,6 +349,202 @@ module IceCube
           @time -= TimeUtil.days_in_month(@time) * ONE_DAY
         end
         @time += ONE_DAY
+      end
+    end
+
+    class RezoneTarget
+      AMBIGUOUS_OPTIONS = [:reject, :earlier, :later].freeze
+
+      def self.resolve(target)
+        return target if target.is_a?(RezoneTarget)
+
+        if defined?(ActiveSupport::TimeZone) && target.is_a?(ActiveSupport::TimeZone)
+          new(target)
+        elsif defined?(ActiveSupport::TimeWithZone) && target.is_a?(ActiveSupport::TimeWithZone)
+          new(target.time_zone)
+        elsif defined?(TZInfo::Timezone) && target.is_a?(TZInfo::Timezone)
+          new(defined?(ActiveSupport::TimeZone) ? (Time.find_zone(target) || target) : target)
+        elsif target.is_a?(Time)
+          new(target.utc_offset)
+        elsif target.is_a?(Numeric)
+          new(target.to_i)
+        elsif fixed_offset?(target)
+          new(parse_fixed_offset(target))
+        elsif target.is_a?(String) || target.is_a?(Symbol)
+          new(resolve_named_zone(target))
+        else
+          raise ArgumentError, "Invalid Timezone: #{target.inspect}"
+        end
+      end
+
+      def self.fixed_offset?(target)
+        target.is_a?(String) && target =~ /\A[+-]\d{2}:?\d{2}\z/
+      end
+
+      def self.parse_fixed_offset(target)
+        sign = target.start_with?("-") ? -1 : 1
+        digits = target.delete(":")
+        sign * (digits[0, 2].to_i * 3600 + digits[2, 2].to_i * 60)
+      end
+
+      def self.resolve_named_zone(target)
+        target = target.to_s
+        if defined?(ActiveSupport::TimeZone)
+          Time.find_zone!(target)
+        else
+          begin
+            require "tzinfo"
+          rescue LoadError
+            raise ArgumentError, "Invalid Timezone: #{target.inspect}"
+          end
+
+          begin
+            TZInfo::Timezone.get(target)
+          rescue ArgumentError, TZInfo::InvalidTimezoneIdentifier
+            raise ArgumentError, "Invalid Timezone: #{target.inspect}"
+          end
+        end
+      end
+
+      def initialize(zone)
+        @zone = zone
+      end
+
+      def instant(time)
+        if active_support_zone?
+          zone.at(time)
+        elsif tzinfo_zone?
+          time.getlocal(zone.period_for_utc(time.utc).utc_total_offset)
+        else
+          time.getlocal(zone.to_i)
+        end
+      end
+
+      def wall_time(time, ambiguous_time = :reject)
+        ambiguous_time = normalize_ambiguous_time(ambiguous_time)
+        nominal = Time.utc(
+          time.year, time.month, time.day,
+          time.hour, time.min, time.sec + TimeUtil.subsec(time)
+        )
+
+        if active_support_zone?
+          active_support_wall_time(nominal, ambiguous_time)
+        elsif tzinfo_zone?
+          tzinfo_wall_time(nominal, ambiguous_time)
+        else
+          (nominal - zone.to_i).getlocal(zone.to_i)
+        end
+      end
+
+      private
+
+      attr_reader :zone
+
+      def active_support_zone?
+        defined?(ActiveSupport::TimeZone) && zone.is_a?(ActiveSupport::TimeZone)
+      end
+
+      def tzinfo_zone?
+        defined?(TZInfo::Timezone) && zone.is_a?(TZInfo::Timezone)
+      end
+
+      def normalize_ambiguous_time(value)
+        value = value.to_sym
+        unless AMBIGUOUS_OPTIONS.include?(value)
+          raise ArgumentError, "Invalid ambiguous_time: #{value.inspect}. " \
+                               "Expected one of #{AMBIGUOUS_OPTIONS.map(&:inspect).join(", ")}"
+        end
+        value
+      end
+
+      def active_support_wall_time(nominal, ambiguous_time)
+        periods = zone.tzinfo.periods_for_local(nominal)
+
+        if periods.length == 1
+          zone.at(nominal - periods.first.utc_total_offset)
+        elsif periods.length > 1
+          select_period(nominal, periods, ambiguous_time)
+        else
+          select_gap(nominal, ambiguous_time)
+        end
+      end
+
+      def tzinfo_wall_time(nominal, ambiguous_time)
+        periods = zone.periods_for_local(nominal)
+        return time_in_period(nominal, periods.first) if periods.length == 1
+
+        reject_ambiguous(nominal) if periods.empty? && ambiguous_time == :reject
+        if periods.length > 1
+          period = period_for_choice(periods, ambiguous_time)
+          time_in_period(nominal, period)
+        else
+          transition = transition_for_gap(nominal)
+          if ambiguous_time == :earlier
+            (transition.at.to_time - Rational(1, 1_000_000_000))
+              .getlocal(transition.previous_offset.utc_total_offset)
+          else
+            transition.at.to_time.getlocal(transition.offset.utc_total_offset)
+          end
+        end
+      end
+
+      def time_in_period(nominal, period)
+        offset = period.utc_total_offset
+        (nominal - offset).getlocal(offset)
+      end
+
+      def select_period(nominal, periods, ambiguous_time)
+        reject_ambiguous(nominal) if ambiguous_time == :reject
+        period = period_for_choice(periods, ambiguous_time)
+        zone.at(nominal - period.utc_total_offset)
+      end
+
+      def period_for_choice(periods, ambiguous_time)
+        periods = sort_periods(periods)
+        (ambiguous_time == :earlier) ? periods.first : periods.last
+      end
+
+      def sort_periods(periods)
+        periods.sort_by { |period| -period.utc_total_offset }
+      end
+
+      def select_gap(nominal, ambiguous_time)
+        reject_ambiguous(nominal) if ambiguous_time == :reject
+        transition = transition_for_gap(nominal)
+
+        if ambiguous_time == :earlier
+          zone.at(transition.at.to_time - Rational(1, 1_000_000_000))
+        else
+          zone.at(transition.at.to_time)
+        end
+      end
+
+      def transition_for_gap(nominal)
+        tzinfo = active_support_zone? ? zone.tzinfo : zone
+        transitions = tzinfo.transitions_up_to(nominal + 2 * ONE_DAY, nominal - 2 * ONE_DAY)
+        transition = transitions.detect do |candidate|
+          local_end = wall_timestamp(candidate.local_end_at)
+          local_start = wall_timestamp(candidate.local_start_at)
+          nominal.to_r >= local_end && nominal.to_r < local_start
+        end
+        transition || raise(ArgumentError, ambiguous_message(nominal))
+      end
+
+      def wall_timestamp(timestamp)
+        local_time = timestamp.to_time
+        Time.utc(
+          local_time.year, local_time.month, local_time.day,
+          local_time.hour, local_time.min, local_time.sec + local_time.subsec
+        ).to_r
+      end
+
+      def reject_ambiguous(nominal)
+        raise ArgumentError, ambiguous_message(nominal)
+      end
+
+      def ambiguous_message(time)
+        zone_name = zone.respond_to?(:name) ? zone.name : zone.inspect
+        "#{time.strftime("%Y-%m-%d %H:%M:%S")} is not a unique local time in #{zone_name}"
       end
     end
   end

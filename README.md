@@ -134,6 +134,31 @@ the schedule's start_time. Schedule start times are supported as:
 * ActiveSupport::TimeWithZone (with `Time.zone.now`, `Time.zone.local`, `time.in_time_zone(tz)`)
 * DateTime (deprecated) and Date are converted to a Time.local
 
+### Rezoning schedules
+
+Use `Schedule#rezone` to return a schedule in another time zone without
+changing the original schedule. Pass `preserve: :instant` to keep the same UTC
+instant for every time, or `preserve: :wall_time` to keep local year, month,
+day, hour, minute, and second values.
+
+Wall-time conversion must explicitly say what to do when the target zone has
+no unique mapping:
+
+```ruby
+schedule.rezone("Asia/Kolkata", preserve: :instant)
+
+schedule.rezone(
+  "America/New_York",
+  preserve: :wall_time,
+  ambiguous_time: :reject   # or :earlier or :later
+)
+```
+
+The start time, end time/duration, explicit recurrence and exception times, and
+rule `UNTIL` values are all converted with the same option. Rule `COUNT`,
+weekly phase, and date validations are then interpreted by the returned
+schedule. YAML and hash serialization preserve the converted values.
+
 ---
 
 ## Persistence

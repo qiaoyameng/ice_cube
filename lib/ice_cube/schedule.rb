@@ -42,6 +42,38 @@ module IceCube
       @end_time = start_time + seconds
     end
 
+    # Return a copy of the schedule in another time zone. Pass
+    # preserve: :instant to keep each UTC instant, or preserve: :wall_time to
+    # keep the local date and time components. Wall-time conversions must
+    # specify how nonexistent or repeated local times are handled.
+    def rezone(zone = nil, positional_mode = nil, to: nil, preserve: nil, preserve_local_time: nil,
+      ambiguous_time: nil, ambiguous: nil, ambiguity: nil,
+      invalid_time: nil, non_existent_time: nil, nonexistent_time: nil,
+      if_dst: nil, disambiguation: nil, on_ambiguous: nil)
+      zone = to || zone
+      mode = normalize_rezone_mode(preserve || positional_mode)
+      mode = :wall_time if preserve_local_time == true
+      ambiguity = ambiguous_time || ambiguous || non_existent_time || nonexistent_time ||
+        invalid_time || if_dst || disambiguation || on_ambiguous || ambiguity
+      ambiguity = normalize_rezone_ambiguity(ambiguity, mode)
+
+      converted = lambda do |time|
+        rezoned_time(time, zone, mode, ambiguity)
+      end
+      schedule = self.class.allocate
+      schedule.start_time = converted.call(start_time)
+      schedule.end_time = end_time ? converted.call(end_time) : nil
+      schedule.instance_variable_set(
+        :@all_recurrence_rules,
+        rezone_rules(@all_recurrence_rules, zone, mode, ambiguity, false)
+      )
+      schedule.instance_variable_set(
+        :@all_exception_rules,
+        rezone_rules(@all_exception_rules, zone, mode, ambiguity, false)
+      )
+      schedule
+    end
+
     # Add a recurrence time to the schedule
     def add_recurrence_time(time)
       return if time.nil?
@@ -407,6 +439,70 @@ module IceCube
     end
 
     private
+
+    def normalize_rezone_mode(mode)
+      mode = mode.to_sym if mode.is_a?(String)
+      case mode
+      when :instant, :moment, :exact, :utc, :absolute
+        :instant
+      when :wall_time, :wall, :wallclock, :wall_clock, :clock, :local, :local_time,
+        :local_wall_time, :local_datetime, :datetime
+        :wall_time
+      else
+        raise ArgumentError, "Invalid preserve: #{mode.inspect}. " \
+                             "Expected :instant or :wall_time"
+      end
+    end
+
+    def rezoned_time(time, zone, mode, ambiguous_time, end_of_date = false)
+      if time.is_a?(Date) && !time.is_a?(Time)
+        return end_of_date ? time : Date.new(time.year, time.month, time.day) if mode == :wall_time
+
+        time = TimeUtil.ensure_time(time, start_time, end_of_date)
+      end
+
+      if mode == :instant
+        TimeUtil.rezone_instant(time, zone)
+      else
+        TimeUtil.rezone_wall_time(time, zone, ambiguous_time)
+      end
+    end
+
+    def rezone_rules(rules, zone, mode, ambiguous_time, end_of_date)
+      rules.map do |rule|
+        if rule.is_a?(SingleOccurrenceRule)
+          time = rezoned_time(rule.time, zone, mode, ambiguous_time, false)
+          SingleOccurrenceRule.new(time)
+        else
+          Rule.from_hash(rule.to_hash).tap do |copy|
+            if copy.respond_to?(:until_time) && copy.until_time
+              copy.until(
+                rezoned_time(copy.until_time, zone, mode, ambiguous_time, true)
+              )
+            end
+          end
+        end
+      end
+    end
+
+    def normalize_rezone_ambiguity(value, mode)
+      return :reject if mode == :instant
+
+      value = :reject if value == false
+      value = :raise if value == true
+      value = value.to_sym if value.is_a?(String)
+      case value
+      when :reject, :raise, :error, :fail
+        :reject
+      when :earlier, :first, :previous
+        :earlier
+      when :later, :last, :next
+        :later
+      else
+        raise ArgumentError, "Invalid ambiguous_time: #{value.inspect}. " \
+                             "Expected :reject, :earlier, or :later"
+      end
+    end
 
     # Reset all rules for another run
     def reset
