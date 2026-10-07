@@ -10,11 +10,20 @@ module IceCube
     attr_reader :uses
 
     def reset
+      self
     end
 
     # Is this a terminating schedule?
     def terminating?
       until_time || occurrence_count
+    end
+
+    # Return an independent copy of this rule for use by a single enumeration.
+    # Rule objects carry per-enumeration state (COUNT uses, walked time, and
+    # start alignment), so every enumerator/query walks its own copy instead
+    # of resetting or consuming state shared with another in-flight query.
+    def for_enumeration
+      dup.reset
     end
 
     def ==(other)

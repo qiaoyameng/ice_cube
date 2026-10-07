@@ -35,6 +35,21 @@ module IceCube
       @time = nil
       @start_time = nil
       @uses = 0
+      self
+    end
+
+    # Duplicate the validation collections as well: they hold per-rule state
+    # (e.g. COUNT checks and BYSETPOS selections reference the owning rule),
+    # so an enumeration copy must not share them with the original rule.
+    def initialize_copy(original)
+      super
+      @validations = original.validations.transform_values do |validations|
+        validations.map do |validation|
+          validation.dup.tap do |copy|
+            copy.rule = self if copy.respond_to?(:rule=)
+          end
+        end
+      end
     end
 
     def base_interval_validation

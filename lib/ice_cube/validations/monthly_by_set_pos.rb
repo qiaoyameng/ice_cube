@@ -15,6 +15,7 @@ module IceCube
 
     class Validation
       attr_reader :rule, :by_set_pos
+      attr_writer :rule
 
       def initialize(by_set_pos, rule)
         @by_set_pos = by_set_pos

@@ -15,6 +15,7 @@ module IceCube
 
     class Validation
       attr_reader :rule, :count
+      attr_writer :rule
 
       def initialize(count, rule)
         @count = count
