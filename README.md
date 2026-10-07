@@ -118,6 +118,37 @@ RFC: http://www.kanzaki.com/docs/ical/rrule.html
 
 To limit schedules use `count` or `until` on the recurrence rules. Setting `end_time` on the schedule just sets the duration (from the start time) for each occurrence.
 
+### Weighted occupancy
+
+Find the longest intervals in a half-open time window where the combined
+weight of one or more schedules reaches a threshold. Occurrences that started
+before the window are included, while an occurrence ending exactly at a
+boundary is not. Overlapping occurrences from the same schedule are counted
+separately, and exception rules and exception times are applied first.
+
+```ruby
+window = Time.utc(2030, 1, 1, 9)...Time.utc(2030, 1, 1, 17)
+projector = IceCube::Schedule.new(Time.utc(2030, 1, 1, 8, 30), duration: 2 * 3600)
+meeting = IceCube::Schedule.new(Time.utc(2030, 1, 1, 9), duration: 3600)
+
+result = IceCube.occupancy(
+  [[projector, 1], [meeting, 2]],
+  window: window,
+  threshold: 2
+)
+
+result.longest_segments.each do |segment|
+  # segment.slices exposes constant-weight pieces, and each slice has
+  # contributors with their weight and contributing occurrences.
+end
+```
+
+The query is event based and never samples time or materializes an infinite
+schedule. For non-terminating schedules, pass `occurrence_limit:` (or
+`max_occurrences:`); if more intersecting occurrences would be required,
+IceCube raises `IceCube::OccurrenceLimitExceeded` instead of returning a
+partially computed answer.
+
 ---
 
 ## Time Zones and ActiveSupport vs. Standard Ruby Time Classes

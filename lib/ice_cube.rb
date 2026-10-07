@@ -23,6 +23,9 @@ module IceCube
 
   autoload :CountExceeded, "ice_cube/errors/count_exceeded"
   autoload :UntilExceeded, "ice_cube/errors/until_exceeded"
+  autoload :OccurrenceLimitExceeded, "ice_cube/errors/occurrence_limit_exceeded"
+
+  autoload :Occupancy, "ice_cube/occupancy"
 
   autoload :ValidatedRule, "ice_cube/validated_rule"
   autoload :SingleOccurrenceRule, "ice_cube/single_occurrence_rule"
@@ -95,5 +98,41 @@ module IceCube
 
   def self.compatibility=(version)
     @compatibility = version
+  end
+
+  def self.occupancy(
+    weighted_schedules,
+    window:,
+    threshold:,
+    occurrence_limit: nil,
+    max_occurrences: nil,
+    limit: nil
+  )
+    Occupancy.query(
+      weighted_schedules,
+      window: window,
+      threshold: threshold,
+      occurrence_limit: occurrence_limit || max_occurrences || limit
+    )
+  end
+
+  def self.occupancy_between(
+    start_time,
+    end_time,
+    weighted_schedules,
+    threshold:,
+    occurrence_limit: nil,
+    max_occurrences: nil,
+    limit: nil
+  )
+    Occupancy.between(
+      start_time,
+      end_time,
+      weighted_schedules,
+      threshold: threshold,
+      occurrence_limit: occurrence_limit,
+      max_occurrences: max_occurrences,
+      limit: limit
+    )
   end
 end

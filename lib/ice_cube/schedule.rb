@@ -229,6 +229,46 @@ module IceCube
       occurs_between?(opening_time, closing_time, spans: true)
     end
 
+    def self.occupancy_between(
+      start_time,
+      end_time,
+      weighted_schedules,
+      threshold:,
+      occurrence_limit: nil,
+      max_occurrences: nil,
+      limit: nil
+    )
+      Occupancy.between(
+        start_time,
+        end_time,
+        weighted_schedules,
+        threshold: threshold,
+        occurrence_limit: occurrence_limit,
+        max_occurrences: max_occurrences,
+        limit: limit
+      )
+    end
+
+    def occupancy_between(
+      start_time,
+      end_time,
+      weighted_schedules = [],
+      threshold:,
+      occurrence_limit: nil,
+      max_occurrences: nil,
+      limit: nil
+    )
+      Occupancy.between(
+        start_time,
+        end_time,
+        [[self, 1]].concat(Array(weighted_schedules)),
+        threshold: threshold,
+        occurrence_limit: occurrence_limit,
+        max_occurrences: max_occurrences,
+        limit: limit
+      )
+    end
+
     # Return a boolean indicating if an occurrence falls on a certain date
     def occurs_on?(date)
       date = TimeUtil.ensure_date(date)
