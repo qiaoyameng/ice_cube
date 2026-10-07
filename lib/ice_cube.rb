@@ -23,6 +23,10 @@ module IceCube
 
   autoload :CountExceeded, "ice_cube/errors/count_exceeded"
   autoload :UntilExceeded, "ice_cube/errors/until_exceeded"
+  autoload :InvalidLocalTime, "ice_cube/errors/invalid_local_time"
+  autoload :AmbiguousLocalTime, "ice_cube/errors/ambiguous_local_time"
+
+  autoload :Rezone, "ice_cube/rezone"
 
   autoload :ValidatedRule, "ice_cube/validated_rule"
   autoload :SingleOccurrenceRule, "ice_cube/single_occurrence_rule"

@@ -136,6 +136,44 @@ the schedule's start_time. Schedule start times are supported as:
 
 ---
 
+## Moving a Schedule to Another Time Zone
+
+`Schedule#rezone` returns a new schedule in a different time zone, leaving
+the original schedule unchanged. The caller explicitly chooses what is
+preserved for the start time, end time (duration), recurrence/exception
+times and rule UNTIL limits alike:
+
+``` ruby
+schedule = IceCube::Schedule.new(Time.zone.parse("2024-03-04 09:00")) do |s|
+  s.add_recurrence_rule IceCube::Rule.weekly.day(:monday)
+end
+
+# Preserve the real instant (09:00 EST -> 19:45 NPT)
+schedule.rezone("Asia/Kathmandu", mode: :instant)
+
+# Preserve the local wall-clock reading (09:00 -> 09:00 NPT)
+schedule.rezone("Asia/Kathmandu", mode: :wall)
+```
+
+Rule definitions (weekly phase, COUNT, plain date constraints, BYxxx
+validations) are carried over untouched and reinterpreted against the
+rezoned start time.
+
+In `:wall` mode a wall-clock reading may not exist (a DST gap) or may occur
+twice (a DST overlap) in the target zone. The caller chooses how each
+conflict is resolved - there is no silent one-hour shift:
+
+``` ruby
+# :reject (default) raises IceCube::InvalidLocalTime /
+# IceCube::AmbiguousLocalTime; :earlier / :later map to the nearest
+# valid interpretation instead
+schedule.rezone("America/New_York", mode: :wall,
+  on_invalid: :earlier,   # 02:30 in a gap    -> 01:59:59
+  on_ambiguous: :later)   # 01:30 twice       -> second 01:30
+```
+
+---
+
 ## Persistence
 
 ice_cube implements its own hash-based .to_yaml, so you can quickly (and

@@ -42,6 +42,37 @@ module IceCube
       @end_time = start_time + seconds
     end
 
+    # Create a new schedule in another time zone, leaving this schedule
+    # unchanged and still usable. The +mode+ selects what is preserved
+    # for the start time, end time (duration), recurrence/exception
+    # times and rule UNTIL limits alike:
+    #
+    # :instant - the real moment in time (UTC instant) is preserved
+    # :wall    - the local wall-clock reading (year/month/day and
+    #            hour/min/sec) is preserved
+    #
+    # Rule definitions (weekly phase, COUNT, plain date constraints,
+    # BYxxx validations) are carried over untouched and reinterpreted
+    # against the rezoned start time.
+    #
+    # In :wall mode a wall-clock reading may not exist or may occur
+    # twice in the target zone (DST transitions); +on_invalid+ and
+    # +on_ambiguous+ select the resolution for each: :reject (raise
+    # InvalidLocalTime / AmbiguousLocalTime), :earlier or :later.
+    def rezone(zone, mode:, on_invalid: :reject, on_ambiguous: :reject)
+      options = {mode: mode, on_invalid: on_invalid, on_ambiguous: on_ambiguous}
+      convert = ->(time) { Rezone.convert_time(time, zone, **options) }
+      schedule = self.class.new(convert.call(start_time))
+      schedule.end_time = convert.call(end_time) if end_time
+      @all_recurrence_rules.each do |rule|
+        schedule.add_recurrence_rule(rezone_rule(rule, &convert))
+      end
+      @all_exception_rules.each do |rule|
+        schedule.add_exception_rule(rezone_rule(rule, &convert))
+      end
+      schedule
+    end
+
     # Add a recurrence time to the schedule
     def add_recurrence_time(time)
       return if time.nil?
@@ -482,6 +513,26 @@ module IceCube
       return true if terminating?
       method_name = caller(1..1).first.split(" ").last
       raise ArgumentError, "All recurrence rules must specify .until or .count to use #{method_name}"
+    end
+
+    # Copy a rule for Schedule#rezone, converting the absolute times it
+    # holds (single occurrences and UNTIL limits) with the converter.
+    # Plain Date constraints are kept as-is and reinterpreted against
+    # the rezoned schedule. The rule is deep-copied so that internal
+    # back-references (e.g. COUNT tracking its own rule) stay intact
+    # and the original rule is left untouched.
+    def rezone_rule(rule, &convert)
+      if rule.is_a?(SingleOccurrenceRule)
+        return SingleOccurrenceRule.new(convert.call(rule.time))
+      end
+      new_rule = Marshal.load(Marshal.dump(rule))
+      new_rule.reset
+      if new_rule.respond_to?(:until_time) && (until_time = new_rule.until_time)
+        if until_time.is_a?(Time) || until_time.respond_to?(:time_zone)
+          new_rule.until(convert.call(until_time))
+        end
+      end
+      new_rule
     end
 
     def implicit_start_occurrence_rule

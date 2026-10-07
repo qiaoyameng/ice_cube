@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [UNRELEASED]
 ### Added
 - Support for BYSETPOS with all rule frequencies (yearly, monthly, weekly, daily, hourly, minutely, secondly). ([#449](https://github.com/ice-cube-ruby/ice_cube/pull/449)) by [@nehresma](https://github.com/nehresma) and [@NicolasMarlier](https://github.com/NicolasMarlier)
+- `Schedule#rezone` for moving a schedule to another time zone, either preserving the exact instant (`mode: :instant`) or the local wall-clock reading (`mode: :wall`). Start time, duration, recurrence/exception times and rule UNTIL limits are converted alike, and wall-clock conflicts in the target zone (DST gaps/overlaps) are resolved by an explicit caller-chosen policy (`:reject`, `:earlier` or `:later`).
 
 ### Changed
 - Updated CI test matrix to support Rails 7.2, 8.0, 8.1 and Ruby 3.2, 3.3, 3.4, 4.0. ([#565](https://github.com/ice-cube-ruby/ice_cube/pull/565)) by [@nehresma](https://github.com/nehresma) and [@pacso](https://github.com/pacso)
