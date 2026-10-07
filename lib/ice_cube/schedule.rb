@@ -293,6 +293,108 @@ module IceCube
       occurs_between?(time, time)
     end
 
+    # Explain why a given time is or is not an occurrence of the schedule.
+    #
+    # Returns an OccurrenceExplanation describing which recurrence rules or
+    # recurrence times provide the time, which exception rules or exception
+    # times exclude it, and whether it ultimately falls on the schedule
+    # (following #occurs_at? semantics, i.e. occurrence start times).
+    #
+    # Sources are identified by their stable index within #recurrence_rules,
+    # #recurrence_times, #exception_rules and #exception_times, so that two
+    # similar rules can be told apart. When the schedule has no recurrence
+    # rules, the implicit occurrence at #start_time is reported as
+    # {type: :implicit_start}.
+    #
+    # COUNT, UNTIL, start-time alignment and BYSETPOS are evaluated by actual
+    # enumeration: rules are replayed from the schedule's start time on
+    # private copies, so explaining never advances the enumeration state of
+    # the schedule's own rules. Pass `budget:` to cap the number of
+    # enumeration steps; when the budget is exhausted before the time is
+    # reached, the explanation is returned with status :incomplete and
+    # occurs? nil rather than a guess.
+    def explain_occurrence(time, budget: nil)
+      time = TimeUtil.match_zone(time, start_time) or
+        raise ArgumentError, "Time required, got #{time.inspect}"
+      if budget && !(budget.is_a?(Integer) && budget >= 0)
+        raise ArgumentError, "budget must be a non-negative Integer or nil, got #{budget.inspect}"
+      end
+
+      # Mirror enumerate_occurrences' opening-time adjustment so the answer
+      # always agrees with #occurs_at?, including sub-second alignment.
+      opening_time = time + (TimeUtil.subsec(start_time) - TimeUtil.subsec(time))
+      opening_time = start_time if opening_time < start_time
+      closing_time = time
+
+      recurrence_entries = explanation_entries(@all_recurrence_rules, :rrule, :rtime)
+      if recurrence_rules.empty?
+        recurrence_entries.unshift explanation_entry(:implicit_start, nil, implicit_start_occurrence_rule)
+      end
+      exception_entries = explanation_entries(@all_exception_rules, :exrule, :extime)
+
+      t1 = full_required? ? start_time : opening_time
+      t1 = start_time if t1 < start_time
+
+      steps = 0
+      status = :complete
+      providers = nil
+      excluders = []
+      occurrence_time = nil
+
+      loop do
+        if budget && steps >= budget
+          status = :incomplete
+          break
+        end
+        steps += 1
+
+        # Probe all rules without consuming counts, pick the earliest
+        # candidate, then charge counts only to rules that emitted it -
+        # mirroring #next_time.
+        min_time = nil
+        candidates = []
+        recurrence_entries.each do |entry|
+          candidate = entry[:probe].next_time(t1, start_time, min_time || closing_time, increment: false)
+          next unless candidate
+          candidates << [entry, candidate]
+          min_time = candidate if min_time.nil? || candidate < min_time
+        rescue StopIteration
+          next
+        end
+        break unless min_time
+        break if min_time > closing_time
+
+        candidates.each do |entry, candidate|
+          probe = entry[:probe]
+          probe.increment_uses if candidate == min_time && probe.respond_to?(:increment_uses)
+        end
+
+        if min_time >= opening_time
+          occurrence_time = min_time
+          providers = candidates.select { |_, candidate| candidate == min_time }.map(&:first)
+          excluders = exception_entries.select { |entry| entry[:probe].on?(min_time, start_time) }
+          break
+        end
+
+        # Occurrences before the queried time only consume counts; exception
+        # skips advance the same way, so there is no need to evaluate them.
+        t1 = min_time + 1
+      end
+
+      occurs = (status == :complete) ? !providers.nil? && providers.any? && excluders.empty? : nil
+
+      OccurrenceExplanation.new(
+        time: time,
+        occurs: occurs,
+        status: status,
+        provided_by: (providers || []).map { |entry| explanation_source(entry) },
+        excluded_by: excluders.map { |entry| explanation_source(entry) },
+        occurrence_time: occurrence_time,
+        steps: steps,
+        budget: budget
+      )
+    end
+
     # Get the first n occurrences, or the first occurrence if n is skipped
     def first(n = nil)
       occurrences = enumerate_occurrences(start_time).take(n || 1)
@@ -486,6 +588,49 @@ module IceCube
 
     def implicit_start_occurrence_rule
       SingleOccurrenceRule.new(start_time)
+    end
+
+    # Build explanation entries for a list of rules, splitting
+    # SingleOccurrenceRule instances (rtimes/extimes) from validated rules
+    # and tracking each entry's stable index within its public list.
+    def explanation_entries(rules, rule_type, time_type)
+      rule_index = time_index = 0
+      rules.map do |rule|
+        if rule.is_a?(SingleOccurrenceRule)
+          entry = explanation_entry(time_type, time_index, rule)
+          time_index += 1
+        else
+          entry = explanation_entry(rule_type, rule_index, rule)
+          rule_index += 1
+        end
+        entry
+      end
+    end
+
+    def explanation_entry(type, index, rule)
+      {type: type, index: index, rule: rule, probe: explanation_rule_copy(rule)}
+    end
+
+    # Copy a rule so that explaining can enumerate it without disturbing the
+    # schedule's own enumeration state (COUNT usage, alignment, etc.).
+    def explanation_rule_copy(rule)
+      if rule.is_a?(SingleOccurrenceRule)
+        SingleOccurrenceRule.new(rule.time)
+      else
+        Rule.from_hash(rule.to_hash)
+      end
+    end
+
+    def explanation_source(entry)
+      source = {type: entry[:type]}
+      source[:index] = entry[:index] if entry[:index]
+      case entry[:type]
+      when :rrule, :exrule
+        source[:rule] = entry[:rule]
+      when :rtime, :extime
+        source[:time] = entry[:rule].time
+      end
+      source
     end
 
     def recurrence_times_without_start_time

@@ -6,6 +6,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [UNRELEASED]
 ### Added
+- `Schedule#explain_occurrence(time, budget: nil)` returning an `IceCube::OccurrenceExplanation` that identifies which recurrence rules/times provide a given time, which exception rules/times exclude it (by stable rule index), and whether it ultimately falls on the schedule. COUNT, UNTIL, start-time alignment and BYSETPOS are evaluated by actual enumeration on private rule copies, and an optional scan `budget:` yields an explicit `:incomplete` status instead of a guess.
 - Support for BYSETPOS with all rule frequencies (yearly, monthly, weekly, daily, hourly, minutely, secondly). ([#449](https://github.com/ice-cube-ruby/ice_cube/pull/449)) by [@nehresma](https://github.com/nehresma) and [@NicolasMarlier](https://github.com/NicolasMarlier)
 
 ### Changed
