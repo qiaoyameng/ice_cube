@@ -118,6 +118,39 @@ RFC: http://www.kanzaki.com/docs/ical/rrule.html
 
 To limit schedules use `count` or `until` on the recurrence rules. Setting `end_time` on the schedule just sets the duration (from the start time) for each occurrence.
 
+## Occupancy queries
+
+When several schedules share a single resource (e.g. a device), you can ask
+where their combined occupancy reaches a threshold within a finite window.
+Each schedule gets a weight, and every occurrence contributes that weight
+for its half-open interval `[start_time, end_time)` - including occurrences
+that started before the window, and counting self-overlapping occurrences
+of the same schedule separately.
+
+```ruby
+result = IceCube::Occupancy.query(
+  window_start, window_end,
+  [[schedule_a, 2], [schedule_b, 1]], # or { schedule_a => 2, ... }
+  threshold: 2,
+  max_occurrences: 1_000 # optional safety limit
+)
+
+result.longest          # the longest Run at or above the threshold (or nil)
+result.runs             # all qualifying runs, each with constant-set segments
+result.segments         # the qualifying segments, flattened
+
+segment = result.longest.segments.first
+segment.start_time      # half-open interval [start_time, end_time)
+segment.end_time
+segment.weight          # total occupancy; always equals the sum of ...
+segment.contributors    # ... these Contributor#contribution values
+```
+
+The query sweeps occurrence boundaries instead of sampling, and enumerates
+occurrences lazily within the window. If `max_occurrences` is exceeded the
+query raises `IceCube::OccupancyLimitExceeded` rather than returning a
+partial result that looks complete.
+
 ---
 
 ## Time Zones and ActiveSupport vs. Standard Ruby Time Classes
